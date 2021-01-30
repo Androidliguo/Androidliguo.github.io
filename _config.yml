@@ -12,7 +12,7 @@ github_repo: "https://github.com/szuliguo/szuliguo.github.io.git" # you code rep
 # Sidebar settings
 sidebar: true                           # whether or not using Sidebar.
 sidebar-about-description: "Goals determine what you going to be!"
-sidebar-avatar: img/avatar-m      # use absolute URL, seeing it's used in both `/` and `/about/`
+sidebar-avatar: ![个人头像](https://tva1.sinaimg.cn/large/008eGmZEly1gn5r6jb3maj309y09ydha.jpg)     # use absolute URL, seeing it's used in both `/` and `/about/`
 
 
 
