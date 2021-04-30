@@ -1,0 +1,12 @@
+@startuml
+ReferenceBean -> ReferenceBean: spring 容器回调afterPropertiesSet
+ReferenceBean -> ReferenceBean: getObject
+ReferenceBean -> ReferenceConfig: init
+
+
+Alice -> Bob: Authentication Request
+Bob --> Alice: Authentication Response
+
+Alice -> Bob: Another authentication Request
+Alice <-- Bob: another authentication Response
+@enduml
