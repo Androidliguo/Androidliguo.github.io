@@ -19,128 +19,40 @@ tags:
 Dubbo Filter 的入口是ProtocolFilterWrapper。ProtocolFilterWrapper 实现了 Protocol 接口。当调用ExtensionLoader的getExtension方法时，会做拦截处理，如果存在封装器，则返回封装器实现，而将真实实现通过构造方法注入到封装器中。举个简单的例子，当获取DubboProtocol的时候，会
 先经过ProtocolFilterWrapper进行包装。
 
-### 1. 服务暴露时序图
-![](https://tva1.sinaimg.cn/large/008eGmZEgy1gpmwtf0rgmj31250mewet.jpg)
 
-### 2. 源码分析
+### 1. 源码分析
 
-#### DubboBootstrap.exportServices
+#### ProtocolFilterWrapper 实现了 Protocol 接口，是一个包装类。
 
-从配置管理器中获取到所有的ServiceConfig实例，遍历，然后一个一个的暴露。
-
-![](https://tva1.sinaimg.cn/large/008eGmZEgy1gpmwx6ov45j30rf0kvq3q.jpg)
+![](https://tva1.sinaimg.cn/large/008i3skNgy1gq90j3xn1nj315a0gqq74.jpg)
 
 
 
-#### ServiceConfig.export
+#### 生产者和消费者都会创建过滤器链
 
-* 如果DubboBootstrap为空，也就没有初始化，就初始化一下DubboBootstrap
-* init serviceMetadata 初始化服务的原数据信息
-* export服务，判断是否延时export
-* 发布ServiceConfigExportedEvent事件
+无论是生产者还是消费者都会创建过滤器链，看一下buildInvokerChain的源码。
 
-![](https://tva1.sinaimg.cn/large/008eGmZEgy1gpmwz4cv3xj30sc0o1my8.jpg)
+![](https://tva1.sinaimg.cn/large/008i3skNgy1gq90jh2xdzj30u01azkjl.jpg)
 
+注意，在创建装饰者模式的时，Filter是倒序的。看一下debug的结果图。
 
-
-#### ServiceConfig.doExportUrls
-
-一个服务ServiceConfig可能同时以多个协议export。
-
-* 获取服务注册中心的URL地址信息，一个服务可以同事在多个注册中心注册
-* 遍历服务要暴露的协议集合。一个服务可能同时以dubbo协议，rest协议等export。一般默认是dubbo协议，也推荐是用dubbo协议
-
-![](https://tva1.sinaimg.cn/large/008eGmZEgy1gpmwzx4is5j30wu0oaq4b.jpg))
+![](https://tva1.sinaimg.cn/large/008i3skNgy1gq90k0p7irj31db0e1417.jpg)
 
 
+最终，消费者的链路为:
 
-#### ServiceConfig.doExportUrlsFor1Protocol
+	ConsumerContextFilter -> FutureFilter -> MonitorFilter -> GenericImplFilter -> DubboInvoker
 
-* 设置协议名称，默认为dubbo
-* 设置各个参数，包括side、metadata-type、provider等等
-* 填充方法级别的各个参数，即dubbo:method 中的各个参数
-* 设置是否generic
-* 设置token ServiceConfig token
-* 初始化 serviceMetadata attachments
-* 生成对应service的url，填充host、port参数
-* 如果自定义ConfiguratorFactory，则获取自定义的参数
-* 获取scope参数，非remote，则执行exportLocal
-* 如果scope不是local，registryURLs不为空，则根据对应的registryURLs，循环生成url，invoker，wrapperInvoker对象，最终执行PROTOCOL#export(wrapperInvoker)，完成暴露
-* 如果scope不是local，且registryURLs为空，则生成invoker，wrapperInvoker执行执行PROTOCOL#export(wrapperInvoker)，完成。
+生产者的链路为:
 
-通过以上流程，我们可以看到核心的暴露方法为exportLocal和PROTOCOL.export两个方法。
-
-* scope = none，不导出服务
-* scope != remote，导出到本地
-* scope != local，导出到远程
+	EchoFilter -> ClassloaderFilter -> GenericFilter -> ContextFilter -> TraceFilter -> TimeoutFilter -> MonitorFilter -> ExceptionFilter -> AbstractProxyInvoker
 
 
-#### ProxyFactory.getInvoker
+### 2. 总结
+
+Dubbo可以通过装饰器模式增强Invoker功能, Dubbo Filter是Dubbo重要的调用拦截扩展。
 
 
-Invoker 是实体域，它是 Dubbo 的核心模型，其它模型都向它靠扰，或转换成它，它代表一个可执行体，可向它发起 invoke 调用，它有可能是一个本地的实现，也可能是一个远程的实现，也可能一个集群实现。
+### 3. 鸣谢
 
-不管是导出到本地，还是远程。进行服务导出之前，均需要先创建 Invoker，这是一个很重要的步骤。因此下面先来分析 Invoker 的创建过程。
-
-Invoker 是由 ProxyFactory 创建而来，Dubbo 默认的 ProxyFactory 实现类是 JavassistProxyFactory。
-
-
-![](https://tva1.sinaimg.cn/large/008eGmZEgy1gpmx2hj69mj30z20ibwfa.jpg)
-
-![](https://tva1.sinaimg.cn/large/008eGmZEgy1gpmx3bhjbkj30ss0htaa6.jpg)
-
-
-
-
-#### ServiceConfig.exportLocal
-
-exportLocal 方法比较简单，首先根据 URL 协议头决定是否导出服务。若需导出，则创建一个新的 URL 并将协议头、主机名以及端口设置成新的值。然后创建 Invoker，并调用 InjvmProtocol 的 export 方法导出服务。
-
-
-![](https://tva1.sinaimg.cn/large/008eGmZEgy1gpmx3qgpgfj30yx0bswev.jpg)
-
-
-#### RegistryProtocol.exportRemote
-
-与导出服务到本地相比，导出服务到远程的过程要复杂不少，其包含了服务导出与服务注册两个过程。这两个过程涉及到了大量的调用，比较复杂。
-
-* 调用 doLocalExport 导出服务
-* 向注册中心注册服务
-* 向注册中心进行订阅 override 数据
-* 创建并返回 DestroyableExporter
-
-
-![](https://tva1.sinaimg.cn/large/008eGmZEgy1gpmx402u04j30u00xvtk4.jpg)
-
-
-#### DubboProtocol.export
-
-假设运行时协议为 dubbo，此处的 protocol 变量会在运行时加载 DubboProtocol，并调用 DubboProtocol 的 export 方法。
-
-
-![](https://tva1.sinaimg.cn/large/008eGmZEgy1gpmx4jacmwj30v20ort9q.jpg)
-
-
-#### openServer
-
-![](https://tva1.sinaimg.cn/large/008eGmZEgy1gpmx5ngx9cj30ok0gigm4.jpg)
-
-
-#### 服务注册
-服务注册主要在 RegistryProtocol.export.
-
-
-![](https://tva1.sinaimg.cn/large/008eGmZEgy1gpmx6nx3zsj30s10c5dfs.jpg)
-
-![](https://tva1.sinaimg.cn/large/008eGmZEgy1gpmx787pawj30qs07kjrg.jpg)
-
-### 3. 总结
-本篇文章详细分析了 Dubbo 服务导出过程，包括配置检测，URL 组装，Invoker 创建过程、导出服务以及注册服务等等。
-
-
-
-### 4. 鸣谢
-
-[服务导出](https://dubbo.apache.org/zh/docs/v2.7/dev/source/export-service/)
-
-[Dubbo服务导出源码简介](https://mergades.blog.csdn.net/article/details/109338146)
+[Dubbo Filter](https://jishuin.proginn.com/p/763bfbd54b0b)
